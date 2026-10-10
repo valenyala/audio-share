@@ -11,6 +11,8 @@
     <string name="label_audio_track">Audio Track</string>
     <string name="label_volume_linear_gain">Volume(Linear Gain)</string>
     <string name="label_buffer_scale">Buffer Scale(Multiple of MinBufferSize)</string>
+    <string name="label_idle_timeout">Pause After Silence</string>
+    <string name="label_off">Off</string>
     <string name="label_audio_effect">Audio Effect</string>
     <string name="label_loudness_enhancer">Loudness Enhancer</string>
     <!-- Settings Screen -->
@@ -48,6 +50,7 @@
     <string name="label_started">Started</string>
     <string name="label_stopped">Stopped</string>
     <string name="label_paused">Paused</string>
+    <string name="label_idle">Idle, waiting for audio</string>
     <string name="label_retry">will retry in %d seconds</string>
     <string name="label_timeout">Connect timeout</string>
     <string name="label_unresolved_address">Unresolved address</string>

@@ -25,6 +25,7 @@ object AudioConfigKeys {
     const val VOLUME = "volume"
     const val BUFFER_SCALE = "buffer_scale"
     const val LOUDNESS_ENHANCER = "loudness_enhancer"
+    const val IDLE_TIMEOUT = "idle_timeout"
 }
 
 object AppSettingsKeys {

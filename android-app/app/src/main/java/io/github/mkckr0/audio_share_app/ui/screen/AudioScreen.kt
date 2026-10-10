@@ -56,6 +56,16 @@ fun AudioScreen() {
                 valueRange = 1f..10f,
                 step = 1f
             )
+            SliderConfig(
+                key = AudioConfigKeys.IDLE_TIMEOUT,
+                title = context.getString(R.string.label_idle_timeout),
+                valueFormatter = {
+                    if (it == 0f) context.getString(R.string.label_off) else "%1.0fs".format(it)
+                },
+                defaultValue = context.getFloat(R.string.default_idle_timeout),
+                valueRange = 0f..30f,
+                step = 1f
+            )
         }
         ConfigGroup(context.getString(R.string.label_audio_effect)) {
             SliderConfig(

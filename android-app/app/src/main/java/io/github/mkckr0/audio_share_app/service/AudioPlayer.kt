@@ -59,7 +59,12 @@ import kotlinx.coroutines.guava.future
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.abs
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
 
 @OptIn(UnstableApi::class)
 class AudioPlayer(val context: Context) : SimpleBasePlayer(Looper.getMainLooper()) {
@@ -90,11 +95,20 @@ class AudioPlayer(val context: Context) : SimpleBasePlayer(Looper.getMainLooper(
     private var _loudnessEnhancer: LoudnessEnhancer? = null
     private val loudnessEnhancer get() = _loudnessEnhancer!!
 
+    private var _encoding = Client.AudioFormat.Encoding.ENCODING_INVALID
+
+    // pause AudioTrack after this long without sound, zero means always play
+    private var _idleTimeout = Duration.ZERO
+    private var _lastSoundTick = TimeSource.Monotonic.markNow()
+
     private val scope: CoroutineScope = MainScope()
     private val retryScope: CoroutineScope = MainScope()
 
     companion object {
         var message by mutableStateOf("")
+
+        // normalized amplitude, about -80dBFS
+        private const val SILENCE_THRESHOLD = 1e-4
     }
 
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
@@ -141,6 +155,7 @@ class AudioPlayer(val context: Context) : SimpleBasePlayer(Looper.getMainLooper(
                     .setPlayWhenReady(false, PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
                     .build()
                 netClient.stop()
+                releaseAudioTrack()
                 retryScope.coroutineContext.cancelChildren()
                 message = context.getString(R.string.label_paused)
             }
@@ -154,6 +169,7 @@ class AudioPlayer(val context: Context) : SimpleBasePlayer(Looper.getMainLooper(
             .setPlayWhenReady(false, PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST)
             .build()
         netClient.stop()
+        releaseAudioTrack()
         retryScope.coroutineContext.cancelChildren()
         message = context.getString(R.string.label_stopped)
         return immediateVoidFuture()
@@ -164,6 +180,12 @@ class AudioPlayer(val context: Context) : SimpleBasePlayer(Looper.getMainLooper(
         scope.cancel()
         netClient.stop()
         retryScope.cancel()
+        releaseAudioTrack()
+        _state = State.Builder().build()
+        return immediateVoidFuture()
+    }
+
+    private fun releaseAudioTrack() {
         _loudnessEnhancer?.run {
             release()
         }
@@ -174,8 +196,63 @@ class AudioPlayer(val context: Context) : SimpleBasePlayer(Looper.getMainLooper(
             release()
         }
         _audioTrack = null
-        _state = State.Builder().build()
-        return immediateVoidFuture()
+    }
+
+    /**
+     * STATE_BUFFERING with playWhenReady keeps the foreground service and the connection alive,
+     * but isPlaying is false, so the session isn't reported as playing while idle
+     */
+    private fun setPlaying(playing: Boolean) {
+        _state = state.buildUpon()
+            .setPlaybackState(if (playing) STATE_READY else STATE_BUFFERING)
+            .build()
+        invalidateState()
+        message = context.getString(if (playing) R.string.label_started else R.string.label_idle)
+    }
+
+    private fun isSilent(audioData: ByteBuffer): Boolean {
+        // absolute gets don't move the position, but duplicate() resets the byte order
+        val data = audioData.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        val begin = data.position()
+        val end = data.limit()
+        when (_encoding) {
+            Client.AudioFormat.Encoding.ENCODING_PCM_FLOAT -> {
+                for (i in begin until end - 3 step 4) {
+                    if (abs(data.getFloat(i)) > SILENCE_THRESHOLD) return false
+                }
+            }
+
+            Client.AudioFormat.Encoding.ENCODING_PCM_8BIT -> {
+                // unsigned, centered at 128
+                for (i in begin until end) {
+                    if (abs((data.get(i).toInt() and 0xff) - 128) > SILENCE_THRESHOLD * 0x7f) return false
+                }
+            }
+
+            Client.AudioFormat.Encoding.ENCODING_PCM_16BIT -> {
+                for (i in begin until end - 1 step 2) {
+                    if (abs(data.getShort(i).toInt()) > SILENCE_THRESHOLD * 0x7fff) return false
+                }
+            }
+
+            Client.AudioFormat.Encoding.ENCODING_PCM_24BIT -> {
+                for (i in begin until end - 2 step 3) {
+                    val sample = (data.get(i).toInt() and 0xff) or
+                            ((data.get(i + 1).toInt() and 0xff) shl 8) or
+                            (data.get(i + 2).toInt() shl 16)
+                    if (abs(sample) > SILENCE_THRESHOLD * 0x7fffff) return false
+                }
+            }
+
+            Client.AudioFormat.Encoding.ENCODING_PCM_32BIT -> {
+                for (i in begin until end - 3 step 4) {
+                    if (abs(data.getInt(i).toLong()) > SILENCE_THRESHOLD * 0x7fffffff) return false
+                }
+            }
+
+            else -> return false
+        }
+        return true
     }
 
     inner class NetClientCallBack : NetClient.Callback {
@@ -189,6 +266,9 @@ class AudioPlayer(val context: Context) : SimpleBasePlayer(Looper.getMainLooper(
         }
 
         override suspend fun onReceiveAudioFormat(format: Client.AudioFormat) {
+            releaseAudioTrack()
+            _encoding = format.encoding
+
             val encoding = when (format.encoding) {
                 Client.AudioFormat.Encoding.ENCODING_PCM_FLOAT -> AudioFormat.ENCODING_PCM_FLOAT
                 Client.AudioFormat.Encoding.ENCODING_PCM_8BIT -> AudioFormat.ENCODING_PCM_8BIT
@@ -273,21 +353,61 @@ class AudioPlayer(val context: Context) : SimpleBasePlayer(Looper.getMainLooper(
                 loudnessEnhancer.setEnabled(true)
             }
 
-            audioTrack.play()
+            _idleTimeout =
+                (audioConfig[floatPreferencesKey(AudioConfigKeys.IDLE_TIMEOUT)] ?: context.getFloat(
+                    R.string.default_idle_timeout
+                )).toInt().seconds
+            Log.i(tag, "idle timeout: $_idleTimeout")
+
+            // with idle timeout, AudioTrack is started by the first non-silent audio data
+            if (!_idleTimeout.isPositive()) {
+                audioTrack.play()
+            }
         }
 
         override suspend fun onPlaybackStarted() {
-            _state = state.buildUpon()
-                .setPlaybackState(STATE_READY)
-                .build()
-            invalidateState()
             Log.d(tag, "onPlaybackStarted")
-            message = context.getString(R.string.label_started)
+            if (!_idleTimeout.isPositive()) {
+                setPlaying(true)
+                return
+            }
+
+            // stay in STATE_BUFFERING until sound arrives
+            setPlaying(false)
+
+            // runs in callback scope, so it's cancelled by NetClient.stop()
+            scope.launch {
+                while (true) {
+                    delay(250.milliseconds)
+                    val track = _audioTrack ?: continue
+                    if (track.playState == AudioTrack.PLAYSTATE_PLAYING && _lastSoundTick.elapsedNow() > _idleTimeout) {
+                        Log.d(tag, "idle, pause AudioTrack")
+                        track.pause()
+                        track.flush()
+                        setPlaying(false)
+                    }
+                }
+            }
         }
 
         override suspend fun onReceiveAudioData(audioData: ByteBuffer) {
 //            Log.d(tag, "${audioData.remaining()}")
-            audioTrack.write(audioData, audioData.remaining(), AudioTrack.WRITE_NON_BLOCKING)
+            val track = _audioTrack ?: return
+            if (_idleTimeout.isPositive()) {
+                val playing = track.playState == AudioTrack.PLAYSTATE_PLAYING
+                if (!isSilent(audioData)) {
+                    _lastSoundTick = TimeSource.Monotonic.markNow()
+                    if (!playing) {
+                        Log.d(tag, "sound, play AudioTrack")
+                        track.play()
+                        setPlaying(true)
+                    }
+                } else if (!playing) {
+                    // don't queue silence while idle, it would delay the next sound
+                    return
+                }
+            }
+            track.write(audioData, audioData.remaining(), AudioTrack.WRITE_NON_BLOCKING)
         }
 
         override suspend fun onError(message: String?, cause: Throwable?) {
@@ -295,6 +415,7 @@ class AudioPlayer(val context: Context) : SimpleBasePlayer(Looper.getMainLooper(
             retryScope.launch {
 
                 netClient.stop()
+                releaseAudioTrack()
 
                 val reason = message ?: cause?.stackTraceToString()
                 var wait = 3

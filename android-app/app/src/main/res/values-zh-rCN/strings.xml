@@ -11,6 +11,8 @@
     <string name="label_audio_track">音轨</string>
     <string name="label_volume_linear_gain">音量（线性增益）</string>
     <string name="label_buffer_scale">缓冲区倍数（MinBufferSize 的倍数）</string>
+    <string name="label_idle_timeout">静音后暂停</string>
+    <string name="label_off">关闭</string>
     <string name="label_audio_effect">音效</string>
     <string name="label_loudness_enhancer">响度增强器</string>
     <!-- Settings Screen -->
@@ -48,6 +50,7 @@
     <string name="label_started">已开始</string>
     <string name="label_stopped">已关闭</string>
     <string name="label_paused">已暂停</string>
+    <string name="label_idle">空闲，等待音频</string>
     <string name="label_retry">会在%d秒内重试</string>
     <string name="label_timeout">连接超时</string>
     <string name="label_unresolved_address">无法解析的地址</string>
