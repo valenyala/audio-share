@@ -64,6 +64,11 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs["release"]
         }
+        debug {
+            // installs next to the release app instead of replacing it
+            applicationIdSuffix = ".fork"
+            versionNameSuffix = "-fork"
+        }
     }
 
     kotlin {

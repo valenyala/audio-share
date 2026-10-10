@@ -35,6 +35,38 @@
 Audio Share can share Windows/Linux computer's audio to Android phone over network, so your phone becomes the speaker of computer. (You needn't buy a new speaker😄.)
 
 
+## About this fork
+
+This is a fork of [mkckr0/audio-share](https://github.com/mkckr0/audio-share). It adds a **Pause After Silence** setting to the Android app, under Audio → Audio Track. When it's set, the app only plays while the computer is sending sound. After that many seconds of silence it pauses the audio output. It stays connected while idle, but Android no longer treats it as playing media, so Bluetooth headphones and the media controls aren't kept busy. Off, the default, keeps the original always-playing behavior.
+
+The Windows server also sends zeros for buffers that Windows marks as silent. Their content is undefined otherwise.
+
+### Build the Android app
+
+`android-app` has a Nix flake that provides JDK 17 and the Android SDK (platform 35, build-tools 34.0.0). Without Nix, see [Compile from source](#compile-from-source).
+
+```sh
+cd android-app
+# the build script loads the release signing config even for debug builds, a placeholder is enough
+printf 'storeFile=/dev/null\nkeyAlias=placeholder\nstorePassword=placeholder\nkeyPassword=placeholder\n' > keystore.properties
+nix develop -c bash ./gradlew :app:assembleDebug
+```
+
+- `gradlew` isn't executable in the repo, so it's run through `bash`.
+- On NixOS, Gradle downloads a prebuilt `protoc`, which needs [nix-ld](https://github.com/nix-community/nix-ld) enabled.
+
+### Install next to the original app
+
+Debug builds use the application ID `io.github.mkckr0.audio_share_app.fork` and show up as "Audio Share Fork". They install alongside the original app instead of replacing it, and the two don't share settings.
+
+```sh
+nix develop -c adb install app/build/outputs/apk/debug/audio-share-app-*-debug.apk
+```
+
+- On MIUI, turn on **Install via USB** in Developer options first. It also covers wireless ADB. Then give the app **Autostart** and set its battery saver to **No restrictions**, so it stays connected in the background.
+- Don't connect both apps to the server at the same time, or you'll hear the audio twice.
+
+
 ## Screenshots
 
 <img src="docs/img/win_01.png" width="45%" alt="docs/img/win_01.png">&nbsp;
